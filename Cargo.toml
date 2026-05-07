@@ -1,0 +1,19 @@
+[package]
+name = "iap2-rs"
+version = "0.1.0"
+edition = "2021"
+description = "iAP2 protocol implementation for Apple MFi accessories"
+license = "GPLv3"
+repository = "https://github.com/usenocturne/iap2-rs"
+
+[dependencies]
+tokio = { version = "1.41", features = ["sync", "time", "io-util", "rt", "macros"] }
+bluer = { version = "0.17", features = ["rfcomm", "bluetoothd"] }
+bytes = "1.8"
+thiserror = "2.0"
+async-trait = "0.1"
+tracing = "0.1"
+hex = "0.4"
+
+[dev-dependencies]
+tokio = { version = "1.41", features = ["full", "test-util"] }
