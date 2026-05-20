@@ -151,7 +151,7 @@ impl EaSessionManager {
     pub async fn send_data(
         &mut self,
         link: &mut Iap2Link,
-        stream: &mut bluer::rfcomm::Stream,
+        stream: &mut dyn crate::transport::Iap2Transport,
         session_id: u8,
         data: Bytes,
     ) -> Result<()> {

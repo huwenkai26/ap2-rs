@@ -2,9 +2,9 @@ use bytes::{Buf, BytesMut};
 use crate::error::{Iap2Error, Result};
 use crate::packet::{Iap2Packet, PacketType};
 use crate::types::LinkConfig;
-use bluer::rfcomm::Stream;
+
 use std::collections::{BTreeMap, VecDeque};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
 use tokio::time::{timeout, Duration};
 use tracing::{debug, info, warn};
 
@@ -43,7 +43,15 @@ impl Iap2Link {
         self.state == LinkState::Established
     }
 
-    pub async fn negotiate(&mut self, stream: &mut Stream) -> Result<()> {
+    /// 仅限测试：强制设置为已连接状态。
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn force_established(&mut self, seq: u8, ack: u8) {
+        self.seq = seq;
+        self.ack = ack;
+        self.state = LinkState::Established;
+    }
+
+    pub async fn negotiate(&mut self, stream: &mut dyn crate::transport::Iap2Transport) -> Result<()> {
         info!("Starting iAP2 link negotiation");
 
         let _ = self.try_iap1_probe(stream).await;
@@ -79,7 +87,7 @@ impl Iap2Link {
         Ok(())
     }
 
-    async fn try_iap1_probe(&mut self, stream: &mut Stream) -> Result<()> {
+    async fn try_iap1_probe(&mut self, stream: &mut dyn crate::transport::Iap2Transport) -> Result<()> {
         let iap1_check = [0xFF, 0x55, 0x02, 0x00, 0xEE, 0x10];
         stream.write_all(&iap1_check).await?;
         stream.flush().await?;
@@ -92,14 +100,14 @@ impl Iap2Link {
         Ok(())
     }
 
-    async fn send_detect(&mut self, stream: &mut Stream) -> Result<()> {
+    async fn send_detect(&mut self, stream: &mut dyn crate::transport::Iap2Transport) -> Result<()> {
         info!("Sending iAP2 DETECT");
         let packet = Iap2Packet::detect();
         self.write_packet(stream, &packet).await?;
         Ok(())
     }
 
-    async fn send_link_sync(&mut self, stream: &mut Stream) -> Result<()> {
+    async fn send_link_sync(&mut self, stream: &mut dyn crate::transport::Iap2Transport) -> Result<()> {
         info!("Sending SYN packet to establish iAP2 link");
 
         self.seq = self.config.initial_seq;
@@ -112,14 +120,14 @@ impl Iap2Link {
         Ok(())
     }
 
-    async fn resend_link_sync(&mut self, stream: &mut Stream) -> Result<()> {
+    async fn resend_link_sync(&mut self, stream: &mut dyn crate::transport::Iap2Transport) -> Result<()> {
         let packet = Iap2Packet::syn(self.seq);
         self.write_packet(stream, &packet).await?;
         debug!("Resent SYN packet with seq=0x{:02X}", self.seq);
         Ok(())
     }
 
-    async fn wait_for_syn_ack(&mut self, stream: &mut Stream) -> Result<()> {
+    async fn wait_for_syn_ack(&mut self, stream: &mut dyn crate::transport::Iap2Transport) -> Result<()> {
         debug!("Waiting for SYN-ACK packet from iPhone");
 
         let packet = self.read_packet_with_timeout(stream).await?;
@@ -147,7 +155,7 @@ impl Iap2Link {
         Ok(())
     }
 
-    async fn send_ack(&mut self, stream: &mut Stream) -> Result<()> {
+    async fn send_ack(&mut self, stream: &mut dyn crate::transport::Iap2Transport) -> Result<()> {
         debug!("Sending ACK packet to complete handshake");
 
         self.seq = self.seq.wrapping_add(1);
@@ -162,7 +170,7 @@ impl Iap2Link {
         Ok(())
     }
 
-    pub async fn receive_data(&mut self, stream: &mut Stream) -> Result<Iap2Packet> {
+    pub async fn receive_data(&mut self, stream: &mut dyn crate::transport::Iap2Transport) -> Result<Iap2Packet> {
         if let Some(pkt) = self.pending.pop_front() {
             debug!(
                 "Delivering pending control message with seq=0x{:02X}",
@@ -263,7 +271,7 @@ impl Iap2Link {
 
     pub async fn send_data(
         &mut self,
-        stream: &mut Stream,
+        stream: &mut dyn crate::transport::Iap2Transport,
         session_id: u8,
         payload: bytes::Bytes,
     ) -> Result<()> {
@@ -366,7 +374,7 @@ impl Iap2Link {
         Ok(())
     }
 
-    async fn write_packet(&self, stream: &mut Stream, packet: &Iap2Packet) -> Result<()> {
+    async fn write_packet(&self, stream: &mut dyn crate::transport::Iap2Transport, packet: &Iap2Packet) -> Result<()> {
         let bytes = packet.to_bytes();
 
         debug!("Sending raw packet: {}", hex::encode(&bytes));
@@ -378,7 +386,7 @@ impl Iap2Link {
         Ok(())
     }
 
-    async fn read_packet_with_timeout(&mut self, stream: &mut Stream) -> Result<Iap2Packet> {
+    async fn read_packet_with_timeout(&mut self, stream: &mut dyn crate::transport::Iap2Transport) -> Result<Iap2Packet> {
         match timeout(
             Duration::from_millis(self.config.timeout_ms),
             self.read_packet(stream),
@@ -393,7 +401,7 @@ impl Iap2Link {
     /// Read available bytes from stream into our persistent buffer.
     /// Cancellation-safe: if dropped mid-await, bytes already in read_buf are preserved.
     /// Only the in-flight kernel read is lost, which hasn't been consumed yet.
-    async fn fill_buf(&mut self, stream: &mut Stream) -> Result<()> {
+    async fn fill_buf(&mut self, stream: &mut dyn crate::transport::Iap2Transport) -> Result<()> {
         let mut tmp = [0u8; 4096];
         let n = stream.read(&mut tmp).await?;
         if n == 0 {
@@ -450,7 +458,7 @@ impl Iap2Link {
 
     /// Cancellation-safe packet reader. Uses a persistent buffer so that bytes
     /// read from the stream are never lost if the future is dropped by tokio::select!.
-    async fn read_packet(&mut self, stream: &mut Stream) -> Result<Iap2Packet> {
+    async fn read_packet(&mut self, stream: &mut dyn crate::transport::Iap2Transport) -> Result<Iap2Packet> {
         loop {
             if let Some(packet) = self.try_parse_packet()? {
                 return Ok(packet);

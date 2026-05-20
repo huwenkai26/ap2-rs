@@ -6,9 +6,14 @@ description = "iAP2 protocol implementation for Apple MFi accessories"
 license = "GPLv3"
 repository = "https://github.com/usenocturne/iap2-rs"
 
+[features]
+default = []
+linux-bluer = ["dep:bluer"]
+test-support = []
+
 [dependencies]
 tokio = { version = "1.41", features = ["sync", "time", "io-util", "rt", "macros"] }
-bluer = { version = "0.17", features = ["rfcomm", "bluetoothd"] }
+bluer = { version = "0.17", features = ["rfcomm", "bluetoothd"], optional = true }
 bytes = "1.8"
 thiserror = "2.0"
 async-trait = "0.1"

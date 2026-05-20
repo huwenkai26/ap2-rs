@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use bluer::rfcomm::Stream;
+
 use bytes::Bytes;
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::{Duration, Instant};
@@ -58,7 +58,7 @@ impl Iap2Connection {
     }
 }
 
-pub async fn connect(stream: Stream, config: Iap2Config) -> Result<Iap2Connection> {
+pub async fn connect<T: crate::transport::Iap2Transport>(stream: T, config: Iap2Config) -> Result<Iap2Connection> {
     let (event_tx, event_rx) = mpsc::unbounded_channel();
     let (ea_session_tx, ea_session_rx) = mpsc::unbounded_channel();
     let (hid_tx, hid_rx) = mpsc::unbounded_channel();
@@ -99,8 +99,8 @@ pub async fn connect(stream: Stream, config: Iap2Config) -> Result<Iap2Connectio
     })
 }
 
-async fn run_connection(
-    stream: Stream,
+async fn run_connection<T: crate::transport::Iap2Transport>(
+    stream: T,
     config: Iap2Config,
     event_tx: mpsc::UnboundedSender<ConnectionEvent>,
     ea_session_tx: mpsc::UnboundedSender<EaSession>,
@@ -113,7 +113,7 @@ async fn run_connection(
 
     {
         let mut stream_guard = stream.lock().await;
-        link.negotiate(&mut stream_guard).await?;
+        link.negotiate(&mut *stream_guard).await?;
     }
     let _ = event_tx.send(ConnectionEvent::LinkEstablished);
     info!("Link negotiation complete, waiting for authentication");
@@ -149,7 +149,7 @@ async fn run_connection(
         tokio::select! {
             result = async {
                 let mut stream_guard = stream.lock().await;
-                link.receive_data(&mut stream_guard).await
+                link.receive_data(&mut *stream_guard).await
             } => {
                 match result {
                     Ok(packet) => {
@@ -159,7 +159,7 @@ async fn run_connection(
                             if sid == control_session_id {
                                 handle_control_message(
                                     &mut link,
-                                    &mut stream_guard,
+                                    &mut *stream_guard,
                                     &control,
                                     &mut ea_manager,
                                     &mut hid_remote,
@@ -172,7 +172,7 @@ async fn run_connection(
                             } else if sid == FILE_TRANSFER_SESSION_ID {
                                 handle_file_transfer(
                                     &mut link,
-                                    &mut stream_guard,
+                                    &mut *stream_guard,
                                     &mut file_transfer,
                                     &packet.payload,
                                     &event_tx,
@@ -201,7 +201,7 @@ async fn run_connection(
             } => {
                 if let Some((session_id, data)) = data {
                     let mut stream_guard = stream.lock().await;
-                    if let Err(e) = ea_manager.send_data(&mut link, &mut stream_guard, session_id, data).await {
+                    if let Err(e) = ea_manager.send_data(&mut link, &mut *stream_guard, session_id, data).await {
                         error!("Failed to send EA data: {}", e);
                     }
                 }
@@ -210,7 +210,7 @@ async fn run_connection(
             cmd = hid_rx.recv() => {
                 if let Some(command) = cmd {
                     let mut stream_guard = stream.lock().await;
-                    if let Err(e) = hid_remote.send_command(&mut link, &mut stream_guard, command).await {
+                    if let Err(e) = hid_remote.send_command(&mut link, &mut *stream_guard, command).await {
                         error!("Failed to send HID command: {}", e);
                     }
                 }
@@ -219,7 +219,7 @@ async fn run_connection(
             bundle_id = app_launch_rx.recv() => {
                 if let Some(bundle_id) = bundle_id {
                     let mut stream_guard = stream.lock().await;
-                    if let Err(e) = control.send_app_launch_request(&mut link, &mut stream_guard, &bundle_id).await {
+                    if let Err(e) = control.send_app_launch_request(&mut link, &mut *stream_guard, &bundle_id).await {
                         error!("Failed to send app launch request: {}", e);
                     }
                 }
@@ -237,7 +237,7 @@ async fn run_connection(
 
                 if last_keepalive.elapsed() > keepalive_interval {
                     let mut stream_guard = stream.lock().await;
-                    if let Err(e) = control.send_keepalive(&mut link, &mut stream_guard).await {
+                    if let Err(e) = control.send_keepalive(&mut link, &mut *stream_guard).await {
                         error!("Failed to send keepalive: {}", e);
                         return Err(e);
                     }
@@ -250,21 +250,21 @@ async fn run_connection(
     if now_playing_active {
         let mut stream_guard = stream.lock().await;
         let _ = control
-            .send_stop_now_playing_updates(&mut link, &mut stream_guard)
+            .send_stop_now_playing_updates(&mut link, &mut *stream_guard)
             .await;
     }
     if hid_remote.is_started() {
         let mut stream_guard = stream.lock().await;
-        let _ = hid_remote.send_stop(&mut link, &mut stream_guard).await;
+        let _ = hid_remote.send_stop(&mut link, &mut *stream_guard).await;
     }
 
     info!("iAP2 connection ended");
     Ok(())
 }
 
-async fn handle_authentication(
+async fn handle_authentication<T: crate::transport::Iap2Transport>(
     link: &mut Iap2Link,
-    stream: &Arc<Mutex<Stream>>,
+    stream: &Arc<Mutex<T>>,
     auth: &mut Iap2Auth,
     event_tx: &mpsc::UnboundedSender<ConnectionEvent>,
     connection_config: &ConnectionConfig,
@@ -274,7 +274,7 @@ async fn handle_authentication(
 
     loop {
         let mut stream_guard = stream.lock().await;
-        let packet = link.receive_data(&mut stream_guard).await?;
+        let packet = link.receive_data(&mut *stream_guard).await?;
         drop(stream_guard);
 
         if let Some(sid) = packet.session_id {
@@ -310,7 +310,7 @@ async fn handle_authentication(
 
                 let mut stream_guard = stream.lock().await;
                 let sid = control_session_id.unwrap_or(0x0A);
-                auth.handle_certificate_request(link, &mut stream_guard, sid)
+                auth.handle_certificate_request(link, &mut *stream_guard, sid)
                     .await?;
             }
             0xAA02 => {
@@ -322,7 +322,7 @@ async fn handle_authentication(
                 let send_resp = async {
                     auth.handle_challenge_request(
                         link,
-                        &mut stream_guard,
+                        &mut *stream_guard,
                         sid,
                         &packet.payload[6..msg_len],
                     )
@@ -360,7 +360,7 @@ async fn handle_authentication(
 #[allow(clippy::too_many_arguments)]
 async fn handle_control_message(
     link: &mut Iap2Link,
-    stream: &mut Stream,
+    stream: &mut dyn crate::transport::Iap2Transport,
     control: &ControlSession,
     ea_manager: &mut EaSessionManager,
     hid_remote: &mut HidRemote,
@@ -489,7 +489,7 @@ async fn handle_control_message(
 
 async fn handle_file_transfer(
     link: &mut Iap2Link,
-    stream: &mut Stream,
+    stream: &mut dyn crate::transport::Iap2Transport,
     handler: &mut FileTransferHandler,
     payload: &Bytes,
     event_tx: &mpsc::UnboundedSender<ConnectionEvent>,

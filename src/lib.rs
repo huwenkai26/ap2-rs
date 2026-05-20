@@ -1,11 +1,12 @@
-mod auth;
-mod connection;
-mod error;
-mod link;
-mod mfi;
-mod packet;
-mod session;
-mod types;
+pub mod transport;
+pub mod auth;
+pub mod connection;
+pub mod error;
+pub mod link;
+pub mod mfi;
+pub mod packet;
+pub mod session;
+pub mod types;
 
 pub use connection::{connect, Iap2Config, Iap2Connection};
 pub use error::{Iap2Error, Result};

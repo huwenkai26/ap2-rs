@@ -90,7 +90,7 @@ impl FileTransferHandler {
     pub async fn handle_datagram(
         &mut self,
         link: &mut Iap2Link,
-        stream: &mut bluer::rfcomm::Stream,
+        stream: &mut dyn crate::transport::Iap2Transport,
         file_transfer_session_id: u8,
         payload: &[u8],
     ) -> Result<FileTransferOutcome> {
@@ -177,7 +177,7 @@ impl FileTransferHandler {
     async fn handle_setup(
         &mut self,
         link: &mut Iap2Link,
-        stream: &mut bluer::rfcomm::Stream,
+        stream: &mut dyn crate::transport::Iap2Transport,
         file_transfer_session_id: u8,
         payload: &[u8],
     ) -> Result<()> {
@@ -236,7 +236,7 @@ impl FileTransferHandler {
     async fn send_start(
         &self,
         link: &mut Iap2Link,
-        stream: &mut bluer::rfcomm::Stream,
+        stream: &mut dyn crate::transport::Iap2Transport,
         file_transfer_session_id: u8,
         transfer_id: u8,
     ) -> Result<()> {
@@ -254,7 +254,7 @@ impl FileTransferHandler {
     async fn handle_first_data(
         &mut self,
         link: &mut Iap2Link,
-        stream: &mut bluer::rfcomm::Stream,
+        stream: &mut dyn crate::transport::Iap2Transport,
         file_transfer_session_id: u8,
         transfer_id: u8,
         data: &[u8],
@@ -339,7 +339,7 @@ impl FileTransferHandler {
     async fn handle_data(
         &mut self,
         link: &mut Iap2Link,
-        stream: &mut bluer::rfcomm::Stream,
+        stream: &mut dyn crate::transport::Iap2Transport,
         file_transfer_session_id: u8,
         transfer_id: u8,
         data: &[u8],
@@ -425,7 +425,7 @@ impl FileTransferHandler {
     async fn handle_last_data(
         &mut self,
         link: &mut Iap2Link,
-        stream: &mut bluer::rfcomm::Stream,
+        stream: &mut dyn crate::transport::Iap2Transport,
         file_transfer_session_id: u8,
         transfer_id: u8,
         data: &[u8],
@@ -551,7 +551,7 @@ impl FileTransferHandler {
     async fn handle_first_and_only(
         &mut self,
         link: &mut Iap2Link,
-        stream: &mut bluer::rfcomm::Stream,
+        stream: &mut dyn crate::transport::Iap2Transport,
         file_transfer_session_id: u8,
         transfer_id: u8,
         data: &[u8],
@@ -671,7 +671,7 @@ impl FileTransferHandler {
     async fn send_success(
         &self,
         link: &mut Iap2Link,
-        stream: &mut bluer::rfcomm::Stream,
+        stream: &mut dyn crate::transport::Iap2Transport,
         file_transfer_session_id: u8,
         transfer_id: u8,
     ) -> Result<()> {
@@ -692,7 +692,7 @@ impl FileTransferHandler {
     async fn send_failure(
         &self,
         link: &mut Iap2Link,
-        stream: &mut bluer::rfcomm::Stream,
+        stream: &mut dyn crate::transport::Iap2Transport,
         file_transfer_session_id: u8,
         transfer_id: u8,
     ) -> Result<()> {

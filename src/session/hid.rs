@@ -36,7 +36,7 @@ impl HidRemote {
     pub async fn ensure_started(
         &mut self,
         link: &mut Iap2Link,
-        stream: &mut bluer::rfcomm::Stream,
+        stream: &mut dyn crate::transport::Iap2Transport,
     ) -> Result<bool> {
         if !self.started {
             self.send_start(link, stream).await?;
@@ -49,7 +49,7 @@ impl HidRemote {
     pub async fn send_start(
         &mut self,
         link: &mut Iap2Link,
-        stream: &mut bluer::rfcomm::Stream,
+        stream: &mut dyn crate::transport::Iap2Transport,
     ) -> Result<()> {
         info!("Sending StartHID for media playback remote");
 
@@ -90,7 +90,7 @@ impl HidRemote {
     pub async fn send_stop(
         &mut self,
         link: &mut Iap2Link,
-        stream: &mut bluer::rfcomm::Stream,
+        stream: &mut dyn crate::transport::Iap2Transport,
     ) -> Result<()> {
         let mut ctrl = BytesMut::new();
         ctrl.put_u8(0x40);
@@ -116,7 +116,7 @@ impl HidRemote {
     pub async fn send_command(
         &mut self,
         link: &mut Iap2Link,
-        stream: &mut bluer::rfcomm::Stream,
+        stream: &mut dyn crate::transport::Iap2Transport,
         command: HidCommand,
     ) -> Result<()> {
         self.ensure_started(link, stream).await?;
@@ -145,7 +145,7 @@ impl HidRemote {
     pub async fn send_command_with_playback_state(
         &mut self,
         link: &mut Iap2Link,
-        stream: &mut bluer::rfcomm::Stream,
+        stream: &mut dyn crate::transport::Iap2Transport,
         command: HidCommand,
         is_playing: bool,
     ) -> Result<()> {
@@ -176,7 +176,7 @@ impl HidRemote {
     async fn send_report(
         &mut self,
         link: &mut Iap2Link,
-        stream: &mut bluer::rfcomm::Stream,
+        stream: &mut dyn crate::transport::Iap2Transport,
         report: &[u8],
     ) -> Result<()> {
         let mut ctrl = BytesMut::new();

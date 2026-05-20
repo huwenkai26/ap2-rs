@@ -2,6 +2,7 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum Iap2Error {
+    #[cfg(feature = "linux-bluer")]
     #[error("Bluetooth error: {0}")]
     Bluetooth(#[from] bluer::Error),
 

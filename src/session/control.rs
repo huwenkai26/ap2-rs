@@ -35,7 +35,7 @@ impl ControlSession {
     pub async fn send_identification(
         &self,
         link: &mut Iap2Link,
-        stream: &mut bluer::rfcomm::Stream,
+        stream: &mut dyn crate::transport::Iap2Transport,
     ) -> Result<()> {
         info!("Sending device identification");
 
@@ -217,7 +217,7 @@ impl ControlSession {
     pub async fn send_ea_session_request(
         &self,
         link: &mut Iap2Link,
-        stream: &mut bluer::rfcomm::Stream,
+        stream: &mut dyn crate::transport::Iap2Transport,
         protocol_identifier: u8,
     ) -> Result<()> {
         info!(
@@ -255,7 +255,7 @@ impl ControlSession {
     pub async fn send_start_now_playing_updates(
         &self,
         link: &mut Iap2Link,
-        stream: &mut bluer::rfcomm::Stream,
+        stream: &mut dyn crate::transport::Iap2Transport,
     ) -> Result<()> {
         info!("Sending StartNowPlayingUpdates request");
 
@@ -303,7 +303,7 @@ impl ControlSession {
     pub async fn send_stop_now_playing_updates(
         &self,
         link: &mut Iap2Link,
-        stream: &mut bluer::rfcomm::Stream,
+        stream: &mut dyn crate::transport::Iap2Transport,
     ) -> Result<()> {
         info!("Sending StopNowPlayingUpdates request");
 
@@ -327,7 +327,7 @@ impl ControlSession {
     pub async fn send_keepalive(
         &self,
         link: &mut Iap2Link,
-        stream: &mut bluer::rfcomm::Stream,
+        stream: &mut dyn crate::transport::Iap2Transport,
     ) -> Result<()> {
         let mut ctrl = BytesMut::new();
         ctrl.put_u8(0x40);
@@ -349,7 +349,7 @@ impl ControlSession {
     pub async fn send_app_launch_request(
         &self,
         link: &mut Iap2Link,
-        stream: &mut bluer::rfcomm::Stream,
+        stream: &mut dyn crate::transport::Iap2Transport,
         bundle_id: &str,
     ) -> Result<()> {
         info!("Sending RequestAppLaunch for {}", bundle_id);

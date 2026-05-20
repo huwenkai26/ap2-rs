@@ -332,3 +332,24 @@ impl fmt::Debug for Iap2Packet {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_packet_detect_serialize() {
+        let packet = Iap2Packet::detect();
+        let bytes = packet.to_bytes();
+        assert_eq!(bytes.as_ref(), &[0xFF, 0x5A, 0x00, 0x06, 0xEE, 0x10]);
+    }
+
+    #[test]
+    fn test_packet_syn_serialize() {
+        let packet = Iap2Packet::syn(0x10);
+        let bytes = packet.to_bytes();
+        assert_eq!(bytes[0..2], [0xFF, 0x5A]);
+        assert_eq!(bytes[4], 0x80); // SYN control byte
+        assert_eq!(bytes[5], 0x10); // seq
+    }
+}

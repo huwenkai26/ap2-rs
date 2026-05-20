@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use bluer::rfcomm::Stream;
+
 use bytes::{BufMut, BytesMut};
 use tracing::{debug, error, info};
 
@@ -43,7 +43,7 @@ impl Iap2Auth {
     pub async fn handle_certificate_request(
         &mut self,
         link: &mut Iap2Link,
-        stream: &mut Stream,
+        stream: &mut dyn crate::transport::Iap2Transport,
         session_id: u8,
     ) -> Result<()> {
         info!("Handling authentication certificate request");
@@ -58,7 +58,7 @@ impl Iap2Auth {
     pub async fn handle_challenge_request(
         &mut self,
         link: &mut Iap2Link,
-        stream: &mut Stream,
+        stream: &mut dyn crate::transport::Iap2Transport,
         session_id: u8,
         payload: &[u8],
     ) -> Result<()> {
@@ -129,7 +129,7 @@ impl Iap2Auth {
     async fn send_certificate(
         &self,
         link: &mut Iap2Link,
-        stream: &mut Stream,
+        stream: &mut dyn crate::transport::Iap2Transport,
         session_id: u8,
     ) -> Result<()> {
         info!("Sending authentication certificate");
@@ -179,7 +179,7 @@ impl Iap2Auth {
     async fn send_response(
         &mut self,
         link: &mut Iap2Link,
-        stream: &mut Stream,
+        stream: &mut dyn crate::transport::Iap2Transport,
         session_id: u8,
         challenge: &[u8],
     ) -> Result<()> {
@@ -204,7 +204,7 @@ impl Iap2Auth {
     async fn send_response_with_payload(
         &self,
         link: &mut Iap2Link,
-        stream: &mut Stream,
+        stream: &mut dyn crate::transport::Iap2Transport,
         session_id: u8,
         response: &[u8],
     ) -> Result<()> {
