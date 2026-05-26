@@ -12,8 +12,8 @@ fn make_syn_ack(peer_seq: u8, ack_to: u8) -> Vec<u8> {
     );
     // SYN-ACK carries negotiation payload (same as SYN)
     pkt.payload = bytes::Bytes::from_static(&[
-        0x01, 0x05, 0x10, 0x00, 0x04, 0x0B, 0x00, 0x17, 0x03, 0x03, 0x01, 0x01, 0x02, 0x0A,
-        0x00, 0x01, 0x0B, 0x02, 0x01,
+        0x01, 0x05, 0x10, 0x00, 0x04, 0x0B, 0x00, 0x17, 0x03, 0x03, 0x01, 0x01, 0x02, 0x0A, 0x00,
+        0x01, 0x0B, 0x02, 0x01,
     ]);
     pkt.to_bytes().to_vec()
 }
@@ -44,7 +44,11 @@ async fn link_negotiate_detect_syn_ack() {
 
     // 验证发送日志
     let sent = state.lock().unwrap().tx_log.clone();
-    assert!(sent.len() >= 3, "expected at least 3 sends (iAP1 probe, detect, SYN, ACK), got {}", sent.len());
+    assert!(
+        sent.len() >= 3,
+        "expected at least 3 sends (iAP1 probe, detect, SYN, ACK), got {}",
+        sent.len()
+    );
 
     // 第一个发送应该是 iAP1 probe (detect marker)
     assert_eq!(&sent[0][0..2], &[0xFF, 0x55]);

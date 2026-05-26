@@ -344,29 +344,24 @@ impl FileTransferHandler {
         transfer_id: u8,
         data: &[u8],
     ) -> Result<FileTransferOutcome> {
-        let (state, bytes_received, file_size) =
-            match self.active_transfers.get(&transfer_id) {
-                Some(t) => (
-                    t.state.clone(),
-                    t.bytes_received,
-                    t.file_size,
-                ),
-                None => {
-                    if let Some((_, cancel_time)) = self.recently_cancelled.get(&transfer_id) {
-                        if cancel_time.elapsed()
-                            < Duration::from_millis(self.config.stale_packet_grace_ms)
-                        {
-                            debug!(
-                                "Ignoring stale data for recently ended transfer 0x{:02X}",
-                                transfer_id
-                            );
-                            return Ok(FileTransferOutcome::Pending);
-                        }
+        let (state, bytes_received, file_size) = match self.active_transfers.get(&transfer_id) {
+            Some(t) => (t.state.clone(), t.bytes_received, t.file_size),
+            None => {
+                if let Some((_, cancel_time)) = self.recently_cancelled.get(&transfer_id) {
+                    if cancel_time.elapsed()
+                        < Duration::from_millis(self.config.stale_packet_grace_ms)
+                    {
+                        debug!(
+                            "Ignoring stale data for recently ended transfer 0x{:02X}",
+                            transfer_id
+                        );
+                        return Ok(FileTransferOutcome::Pending);
                     }
-                    warn!("Data for unknown transfer 0x{:02X}, ignoring", transfer_id);
-                    return Ok(FileTransferOutcome::Pending);
                 }
-            };
+                warn!("Data for unknown transfer 0x{:02X}, ignoring", transfer_id);
+                return Ok(FileTransferOutcome::Pending);
+            }
+        };
 
         if state != TransferState::Receiving {
             warn!(

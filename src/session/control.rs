@@ -39,6 +39,12 @@ impl ControlSession {
     ) -> Result<()> {
         info!("Sending device identification");
 
+        if let Some(raw) = self.raw_identification_control_payload() {
+            link.send_data(stream, self.session_id, raw).await?;
+            info!("Sent raw IdentificationInformation message");
+            return Ok(());
+        }
+
         let mut ctrl = BytesMut::new();
         ctrl.put_u8(0x40);
         ctrl.put_u8(0x40);
@@ -212,6 +218,32 @@ impl ControlSession {
 
         info!("Sent IdentificationInformation message");
         Ok(())
+    }
+
+    fn raw_identification_control_payload(&self) -> Option<bytes::Bytes> {
+        let raw = self.identification.raw_identification.as_ref()?;
+        if raw.is_empty() {
+            return None;
+        }
+
+        if raw.len() >= 6 && raw[0] == 0x40 && raw[1] == 0x40 {
+            return Some(bytes::Bytes::copy_from_slice(raw));
+        }
+
+        let mut body = BytesMut::new();
+        if raw.len() >= 2 && u16::from_be_bytes([raw[0], raw[1]]) == 0x1D01 {
+            body.put_slice(raw);
+        } else {
+            body.put_u16(0x1D01);
+            body.put_slice(raw);
+        }
+
+        let mut ctrl = BytesMut::new();
+        ctrl.put_u8(0x40);
+        ctrl.put_u8(0x40);
+        ctrl.put_u16((2 + 2 + body.len()) as u16);
+        ctrl.put_slice(&body);
+        Some(ctrl.freeze())
     }
 
     pub async fn send_ea_session_request(

@@ -111,6 +111,7 @@ pub struct PowerConfig {
 
 #[derive(Debug, Clone)]
 pub struct DeviceIdentification {
+    pub raw_identification: Option<Vec<u8>>,
     pub name: String,
     pub model_identifier: String,
     pub manufacturer: String,
@@ -129,6 +130,7 @@ pub struct DeviceIdentification {
 impl Default for DeviceIdentification {
     fn default() -> Self {
         Self {
+            raw_identification: None,
             name: "iAP2 Accessory".to_string(),
             model_identifier: "GENERIC".to_string(),
             manufacturer: "Unknown".to_string(),

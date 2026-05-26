@@ -1,4 +1,3 @@
-pub mod transport;
 pub mod auth;
 pub mod connection;
 pub mod error;
@@ -6,6 +5,7 @@ pub mod link;
 pub mod mfi;
 pub mod packet;
 pub mod session;
+pub mod transport;
 pub mod types;
 
 pub use connection::{connect, Iap2Config, Iap2Connection};

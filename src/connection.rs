@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-
 use bytes::Bytes;
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::{Duration, Instant};
@@ -45,6 +44,10 @@ impl Iap2Connection {
         *self.running.lock().await
     }
 
+    pub async fn stop(&self) {
+        *self.running.lock().await = false;
+    }
+
     pub fn send_hid_command(&self, command: HidCommand) -> Result<()> {
         self.hid_tx
             .send(command)
@@ -58,7 +61,10 @@ impl Iap2Connection {
     }
 }
 
-pub async fn connect<T: crate::transport::Iap2Transport>(stream: T, config: Iap2Config) -> Result<Iap2Connection> {
+pub async fn connect<T: crate::transport::Iap2Transport>(
+    stream: T,
+    config: Iap2Config,
+) -> Result<Iap2Connection> {
     let (event_tx, event_rx) = mpsc::unbounded_channel();
     let (ea_session_tx, ea_session_rx) = mpsc::unbounded_channel();
     let (hid_tx, hid_rx) = mpsc::unbounded_channel();
