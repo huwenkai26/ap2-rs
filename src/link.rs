@@ -304,9 +304,12 @@ impl Iap2Link {
             "Preparing to send data with seq=0x{:02X}, ack=0x{:02X}",
             self.seq, self.ack
         );
-        let packet = Iap2Packet::data(self.seq, self.ack, session_id, payload);
+        let sent_seq = self.seq;
+        let next_seq = sent_seq.wrapping_add(1);
+        let packet = Iap2Packet::data(sent_seq, self.ack, session_id, payload);
 
         self.write_packet(stream, &packet).await?;
+        self.seq = next_seq;
 
         loop {
             let ack = self.read_packet_with_timeout(stream).await?;
@@ -314,6 +317,7 @@ impl Iap2Link {
             match ack.control.packet_type {
                 PacketType::Ack => {
                     let has_payload = !ack.payload.is_empty();
+                    self.ack = ack.seq;
                     if has_payload {
                         if !self.pending.iter().any(|p| p.seq == ack.seq) {
                             self.pending.push_back(ack.clone());
@@ -328,28 +332,30 @@ impl Iap2Link {
                                 ack.seq
                             );
                         }
+                        let response_ack = Iap2Packet::ack(self.seq, self.ack);
+                        self.write_packet(stream, &response_ack).await?;
+                        debug!(
+                            "Sent ACK for piggybacked iPhone data while waiting: seq=0x{:02X}, ack=0x{:02X}",
+                            self.seq, self.ack
+                        );
                     }
-                    self.ack = ack.seq;
 
-                    if ack.ack == self.seq {
-                        debug!("Received ACK for our message (seq=0x{:02X})", self.seq);
-
-                        self.seq = self.seq.wrapping_add(1);
-                        debug!("Incremented sequence to 0x{:02X} for next packet", self.seq);
-
+                    if ack.ack == sent_seq || ack.ack == next_seq {
+                        debug!(
+                            "Received ACK for our message (seq=0x{:02X}, peer_ack=0x{:02X})",
+                            sent_seq, ack.ack
+                        );
                         break;
                     } else {
                         if has_payload {
-                            let response_ack = Iap2Packet::ack(self.seq, self.ack);
-                            self.write_packet(stream, &response_ack).await?;
                             debug!(
-                                "Sent ACK for iPhone data while waiting: seq=0x{:02X}, ack=0x{:02X}",
+                                "Already ACKed iPhone data while waiting: seq=0x{:02X}, ack=0x{:02X}",
                                 self.seq, self.ack
                             );
                         }
                         debug!(
                             "Still waiting for ACK: expected 0x{:02X}, got 0x{:02X}",
-                            self.seq, ack.ack
+                            sent_seq, ack.ack
                         );
                     }
                 }
@@ -393,6 +399,131 @@ impl Iap2Link {
         }
 
         Ok(())
+    }
+
+    pub async fn send_data_retransmit_until_ack_or_payload(
+        &mut self,
+        stream: &mut dyn crate::transport::Iap2Transport,
+        session_id: u8,
+        payload: bytes::Bytes,
+        max_sends: usize,
+        retry_delay_ms: u64,
+    ) -> Result<()> {
+        if self.state != LinkState::Established {
+            return Err(Iap2Error::Protocol("Link not established".to_string()));
+        }
+        if max_sends == 0 {
+            return Err(Iap2Error::Timeout);
+        }
+
+        let sent_seq = self.seq;
+        let packet = Iap2Packet::data(sent_seq, self.ack, session_id, payload);
+        let next_seq = sent_seq.wrapping_add(1);
+        let mut sends = 1usize;
+
+        debug!(
+            "Sending retransmittable data seq=0x{:02X}, ack=0x{:02X}, max_sends={}, retry_delay_ms={}",
+            sent_seq, self.ack, max_sends, retry_delay_ms
+        );
+        self.write_packet(stream, &packet).await?;
+        self.seq = self.seq.wrapping_add(1);
+
+        loop {
+            match timeout(Duration::from_millis(retry_delay_ms), self.read_packet(stream)).await {
+                Ok(Ok(incoming)) => match incoming.control.packet_type {
+                    PacketType::Ack => {
+                        let has_payload = !incoming.payload.is_empty();
+                        self.ack = incoming.seq;
+
+                        if has_payload {
+                            if control_message_id(&incoming.payload) == Some(0xAA02) {
+                                let response_ack = Iap2Packet::ack(self.seq, self.ack);
+                                self.write_packet(stream, &response_ack).await?;
+                                debug!(
+                                    "Received duplicate auth challenge while waiting; continuing retransmit seq=0x{:02X}",
+                                    sent_seq
+                                );
+                                continue;
+                            }
+                            if !self.pending.iter().any(|p| p.seq == incoming.seq) {
+                                self.pending.push_back(incoming.clone());
+                            }
+                            let response_ack = Iap2Packet::ack(self.seq, self.ack);
+                            self.write_packet(stream, &response_ack).await?;
+                            debug!(
+                                "Queued payload packet while waiting for retransmittable send ack seq=0x{:02X}",
+                                incoming.seq
+                            );
+                            return Ok(());
+                        }
+
+                        if incoming.ack == sent_seq || incoming.ack == next_seq {
+                            info!(
+                                "Received ACK for retransmittable message seq=0x{:02X}, peer_ack=0x{:02X}",
+                                sent_seq, incoming.ack
+                            );
+                            return Ok(());
+                        }
+
+                        debug!(
+                            "Ignoring unrelated ACK while waiting for seq=0x{:02X}: ack=0x{:02X}",
+                            sent_seq, incoming.ack
+                        );
+                    }
+                    PacketType::Data if !incoming.payload.is_empty() => {
+                        self.ack = incoming.seq;
+                        if control_message_id(&incoming.payload) == Some(0xAA02) {
+                            let response_ack = Iap2Packet::ack(self.seq, self.ack);
+                            self.write_packet(stream, &response_ack).await?;
+                            debug!(
+                                "Received duplicate auth challenge data while waiting; continuing retransmit seq=0x{:02X}",
+                                sent_seq
+                            );
+                            continue;
+                        }
+                        if !self.pending.iter().any(|p| p.seq == incoming.seq) {
+                            self.pending.push_back(incoming.clone());
+                        }
+                        let response_ack = Iap2Packet::ack(self.seq, self.ack);
+                        self.write_packet(stream, &response_ack).await?;
+                        debug!(
+                            "Queued data payload while waiting for retransmittable send ack seq=0x{:02X}",
+                            incoming.seq
+                        );
+                        return Ok(());
+                    }
+                    PacketType::Eak => {
+                        self.ack = incoming.seq;
+                        debug!(
+                            "Received EAK during retransmittable send: {}",
+                            hex::encode(&incoming.payload)
+                        );
+                    }
+                    other => {
+                        debug!(
+                            "Ignoring packet type {:?} during retransmittable send",
+                            other
+                        );
+                    }
+                },
+                Ok(Err(e)) => return Err(e),
+                Err(_) => {
+                    if sends >= max_sends {
+                        warn!(
+                            "Timed out waiting for ACK/payload after retransmitting seq=0x{:02X} {} times",
+                            sent_seq, sends
+                        );
+                        return Err(Iap2Error::Timeout);
+                    }
+                    sends += 1;
+                    debug!(
+                        "Retransmitting packet seq=0x{:02X} ({}/{})",
+                        sent_seq, sends, max_sends
+                    );
+                    self.write_packet(stream, &packet).await?;
+                }
+            }
+        }
     }
 
     async fn write_packet(
@@ -515,6 +646,13 @@ impl Default for Iap2Link {
     fn default() -> Self {
         Self::new(LinkConfig::default())
     }
+}
+
+fn control_message_id(payload: &[u8]) -> Option<u16> {
+    if payload.len() < 6 || payload[0] != 0x40 || payload[1] != 0x40 {
+        return None;
+    }
+    Some(u16::from_be_bytes([payload[4], payload[5]]))
 }
 
 #[cfg(test)]

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use bytes::{BufMut, BytesMut};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::error::{Iap2Error, Result};
 use crate::link::Iap2Link;
@@ -9,9 +9,13 @@ use crate::mfi::MfiAuthProvider;
 
 const IAP2_MSG_ID_AUTH_CERT: u16 = 0xAA01;
 const IAP2_MSG_ID_AUTH_RESPONSE: u16 = 0xAA03;
+const AUTH_RESPONSE_RETRY_COUNT: usize = 100;
+const AUTH_RESPONSE_RETRY_DELAY_MS: u64 = 100;
 
 pub struct Iap2Auth {
     certificate: Option<Vec<u8>>,
+    last_challenge: Option<Vec<u8>>,
+    last_response: Option<Vec<u8>>,
     mfi_provider: Arc<dyn MfiAuthProvider>,
 }
 
@@ -19,6 +23,8 @@ impl Iap2Auth {
     pub fn new(mfi_provider: Arc<dyn MfiAuthProvider>) -> Self {
         Iap2Auth {
             certificate: None,
+            last_challenge: None,
+            last_response: None,
             mfi_provider,
         }
     }
@@ -137,19 +143,18 @@ impl Iap2Auth {
         ctrl.put_u8(0x40);
         ctrl.put_u8(0x40);
 
-        let padding = vec![0xa1, 0x00, 0x31, 0x00];
         let certificate = self
             .certificate
             .as_ref()
             .ok_or_else(|| Iap2Error::AuthenticationFailed("Certificate not loaded".to_string()))?;
-        let cert_with_padding = [certificate.as_slice(), &padding].concat();
 
-        let data_len = cert_with_padding.len() as u16;
+        let cert_len = certificate.len() as u16;
+        let param_len = cert_len + 4;
 
         let mut param = BytesMut::new();
-        param.put_u16(data_len);
+        param.put_u16(param_len);
         param.put_u16(0x0000);
-        param.put_slice(&cert_with_padding);
+        param.put_slice(certificate);
 
         let mut body = BytesMut::new();
         body.put_u16(IAP2_MSG_ID_AUTH_CERT);
@@ -160,16 +165,16 @@ impl Iap2Auth {
         ctrl.put_slice(&body);
 
         debug!(
-            "Certificate lengths: cert={}, padding=4, data_len={}, msg_len={}",
+            "Certificate lengths: cert={}, param_len={}, msg_len={}",
             certificate.len(),
-            data_len,
+            param_len,
             msg_len
         );
 
         link.send_data(stream, session_id, ctrl.freeze()).await?;
 
         info!(
-            "Sent AuthenticationCertificate message ({} bytes certificate including trailer)",
+            "Sent AuthenticationCertificate message ({} bytes certificate)",
             certificate.len()
         );
         Ok(())
@@ -182,6 +187,17 @@ impl Iap2Auth {
         session_id: u8,
         challenge: &[u8],
     ) -> Result<()> {
+        if self.last_challenge.as_deref() == Some(challenge) {
+            if let Some(response) = self.last_response.clone() {
+                info!("Reusing cached MFi response for duplicate authentication challenge");
+                return self
+                    .send_response_with_payload(link, stream, session_id, &response)
+                    .await;
+            }
+        } else if self.last_response.is_some() {
+            warn!("Received a different authentication challenge after a response was cached");
+        }
+
         let response = self
             .mfi_provider
             .challenge_response(challenge)
@@ -195,6 +211,9 @@ impl Iap2Auth {
             "Sending ECDSA signature as authentication response: {} bytes",
             response.len()
         );
+
+        self.last_challenge = Some(challenge.to_vec());
+        self.last_response = Some(response.clone());
 
         self.send_response_with_payload(link, stream, session_id, &response)
             .await
@@ -212,9 +231,10 @@ impl Iap2Auth {
         ctrl.put_u8(0x40);
 
         let signature_len = response.len() as u16;
+        let param_len = signature_len + 4;
 
         let mut param = BytesMut::new();
-        param.put_u16(2 + 2 + signature_len);
+        param.put_u16(param_len);
         param.put_u16(0x0000);
         param.put_slice(response);
 
@@ -229,12 +249,19 @@ impl Iap2Auth {
         debug!(
             "Auth response lengths: resp={} (sig), param_len={}, msg_len={}",
             response.len(),
-            2 + 2 + signature_len,
+            param_len,
             msg_len
         );
         debug!("Auth response control payload: {}", hex::encode(&body));
 
-        link.send_data(stream, session_id, ctrl.freeze()).await?;
+        link.send_data_retransmit_until_ack_or_payload(
+            stream,
+            session_id,
+            ctrl.freeze(),
+            AUTH_RESPONSE_RETRY_COUNT,
+            AUTH_RESPONSE_RETRY_DELAY_MS,
+        )
+        .await?;
 
         info!(
             "Sent AuthenticationResponse message ({} bytes signature, total message {} bytes)",

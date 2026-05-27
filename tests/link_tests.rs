@@ -113,3 +113,61 @@ async fn link_send_and_receive_data() {
     let ack = Iap2Packet::from_bytes(&sent[0]).unwrap();
     assert_eq!(ack.control.packet_type, PacketType::Ack);
 }
+
+#[tokio::test]
+async fn retransmit_send_accepts_next_sequence_ack() {
+    let config = LinkConfig::default();
+    let mut link = Iap2Link::new(config);
+    link.force_established(0x20, 0x10);
+
+    let ack = Iap2Packet::ack(0x31, 0x21).to_bytes().to_vec();
+    let (mut transport, state) = FakeTransport::with_rx_data(vec![ack]);
+
+    link.send_data_retransmit_until_ack_or_payload(
+        &mut transport,
+        0x0A,
+        bytes::Bytes::from_static(&[0x40, 0x40, 0x00, 0x06, 0xAA, 0x03]),
+        1,
+        10,
+    )
+    .await
+    .unwrap();
+
+    let sent = state.lock().unwrap().tx_log.clone();
+    assert_eq!(sent.len(), 1);
+    let packet = Iap2Packet::from_bytes(&sent[0]).unwrap();
+    assert_eq!(packet.seq, 0x20);
+    assert_eq!(packet.session_id, Some(0x0A));
+}
+
+#[tokio::test]
+async fn send_data_acks_piggybacked_payload_before_delivering_pending() {
+    let config = LinkConfig::default();
+    let mut link = Iap2Link::new(config);
+    link.force_established(0x20, 0x10);
+
+    let challenge_payload =
+        bytes::Bytes::from_static(&[0x40, 0x40, 0x00, 0x06, 0xAA, 0x02]);
+    let piggyback = Iap2Packet::data(0x31, 0x20, 0x0A, challenge_payload.clone())
+        .to_bytes()
+        .to_vec();
+    let (mut transport, state) = FakeTransport::with_rx_data(vec![piggyback]);
+
+    link.send_data(
+        &mut transport,
+        0x0A,
+        bytes::Bytes::from_static(&[0x40, 0x40, 0x00, 0x06, 0xAA, 0x01]),
+    )
+    .await
+    .unwrap();
+
+    let received = link.receive_data(&mut transport).await.unwrap();
+    assert_eq!(received.payload, challenge_payload);
+
+    let sent = state.lock().unwrap().tx_log.clone();
+    assert_eq!(sent.len(), 2);
+    let response_ack = Iap2Packet::from_bytes(&sent[1]).unwrap();
+    assert_eq!(response_ack.control.packet_type, PacketType::Ack);
+    assert_eq!(response_ack.seq, 0x21);
+    assert_eq!(response_ack.ack, 0x31);
+}

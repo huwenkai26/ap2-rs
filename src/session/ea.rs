@@ -57,9 +57,8 @@ impl EaSessionManager {
             session_id, protocol
         );
 
-        self.pending_ea_session = Some(protocol);
-
-        Ok(())
+        self.pending_ea_session = Some(protocol.clone());
+        self.register_session(session_id, protocol)
     }
 
     fn register_session(&mut self, session_id: u8, protocol: String) -> Result<()> {
@@ -170,7 +169,7 @@ impl EaSessionManager {
             .unwrap_or(0x0000);
         if tx_id == 0x0000 {
             warn!(
-                "EA session {} has no known transfer ID yet; sending 0x0000",
+                "EA session {} has no known transfer ID yet; sending raw payload",
                 session_id
             );
         } else {
@@ -178,9 +177,9 @@ impl EaSessionManager {
                 "Using EA transfer ID 0x{:04X} for session {}",
                 tx_id, session_id
             );
+            ea_datagram.put_u16(tx_id);
         }
 
-        ea_datagram.put_u16(tx_id);
         ea_datagram.put_slice(&data);
 
         link.send_data(stream, session_id, ea_datagram.freeze())

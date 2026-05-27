@@ -125,12 +125,15 @@ async fn run_connection<T: crate::transport::Iap2Transport>(
     info!("Link negotiation complete, waiting for authentication");
 
     let mut auth = Iap2Auth::new(config.mfi_provider);
-    let control_session_id = handle_authentication(
+    let (control_session_id, identification_accepted) = handle_authentication(
         &mut link,
         &stream,
         &mut auth,
         &event_tx,
         &config.connection_config,
+        &config.identification,
+        &config.now_playing_config,
+        &config.power_config,
     )
     .await?;
 
@@ -140,6 +143,13 @@ async fn run_connection<T: crate::transport::Iap2Transport>(
         config.now_playing_config.clone(),
         config.power_config.clone(),
     );
+    if identification_accepted {
+        info!("Identification was accepted before authentication; requesting EA session");
+        let mut stream_guard = stream.lock().await;
+        control
+            .send_ea_session_request(&mut link, &mut *stream_guard, 0x00)
+            .await?;
+    }
     let mut ea_manager = EaSessionManager::new(ea_session_tx);
     let mut outgoing_rx = ea_manager.take_outgoing_rx();
     let mut file_transfer = FileTransferHandler::new(config.file_transfer_config.clone());
@@ -274,8 +284,12 @@ async fn handle_authentication<T: crate::transport::Iap2Transport>(
     auth: &mut Iap2Auth,
     event_tx: &mpsc::UnboundedSender<ConnectionEvent>,
     connection_config: &ConnectionConfig,
-) -> Result<u8> {
+    identification: &DeviceIdentification,
+    now_playing_config: &NowPlayingConfig,
+    power_config: &PowerConfig,
+) -> Result<(u8, bool)> {
     let mut control_session_id = None;
+    let mut identification_accepted = false;
     let challenge_timeout = Duration::from_millis(connection_config.challenge_timeout_ms);
 
     loop {
@@ -309,6 +323,30 @@ async fn handle_authentication<T: crate::transport::Iap2Transport>(
         debug!("Received auth control message 0x{:04X}", msg_id);
 
         match msg_id {
+            0x1D00 => {
+                // StartIdentification can arrive before authentication on real iPhones.
+                info!("iPhone requested identification before authentication");
+                let mut stream_guard = stream.lock().await;
+                let sid = control_session_id.unwrap_or(0x0A);
+                let control = ControlSession::new(
+                    identification.clone(),
+                    sid,
+                    now_playing_config.clone(),
+                    power_config.clone(),
+                );
+                control.send_identification(link, &mut *stream_guard).await?;
+            }
+            0x1D02 => {
+                // IdentificationAccepted. If this happens before AA05, defer EA02 until
+                // authentication succeeds.
+                info!("Identification accepted before authentication completed");
+                identification_accepted = true;
+                let _ = event_tx.send(ConnectionEvent::IdentificationAccepted);
+            }
+            0x1D03 => {
+                warn!("Identification rejected before authentication completed");
+                let _ = event_tx.send(ConnectionEvent::IdentificationRejected);
+            }
             0xAA00 => {
                 // RequestAuthenticationCertificate
                 info!("iPhone requested authentication certificate");
@@ -344,7 +382,7 @@ async fn handle_authentication<T: crate::transport::Iap2Transport>(
                 // AuthenticationSucceeded
                 info!("Authentication succeeded!");
                 let _ = event_tx.send(ConnectionEvent::AuthenticationSucceeded);
-                return Ok(control_session_id.unwrap_or(0x0A));
+                return Ok((control_session_id.unwrap_or(0x0A), identification_accepted));
             }
             0xAA04 => {
                 // AuthenticationFailed
@@ -439,7 +477,7 @@ async fn handle_control_message(
                     info!("EA session ID from device: {}", session_id);
 
                     ea_manager
-                        .handle_session_started(session_id, "com.usenocturne.daemon".to_string())?;
+                        .handle_session_started(session_id, control.ea_protocol_name().to_string())?;
                     let _ = event_tx.send(ConnectionEvent::EaSessionStarted { session_id });
 
                     if enable_now_playing && !*now_playing_active {

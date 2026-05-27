@@ -32,6 +32,10 @@ impl ControlSession {
         self.session_id
     }
 
+    pub fn ea_protocol_name(&self) -> &str {
+        &self.identification.ea_protocol_name
+    }
+
     pub async fn send_identification(
         &self,
         link: &mut Iap2Link,
@@ -250,11 +254,13 @@ impl ControlSession {
         &self,
         link: &mut Iap2Link,
         stream: &mut dyn crate::transport::Iap2Transport,
-        protocol_identifier: u8,
+        session_identifier: u8,
     ) -> Result<()> {
         info!(
-            "Sending EA session request for {}",
-            self.identification.ea_protocol_name
+            "Sending EA session request for {} (protocol_id={}, session_id={})",
+            self.identification.ea_protocol_name,
+            self.identification.ea_protocol_identifier,
+            session_identifier
         );
 
         let mut ctrl = BytesMut::new();
@@ -264,15 +270,14 @@ impl ControlSession {
         let mut body = BytesMut::new();
         body.put_u16(0xEA02); // StartExternalAccessoryProtocolSession
 
-        let protocol_name = format!("{}\0", self.identification.ea_protocol_name);
-        body.put_u16((protocol_name.len() + 4) as u16);
+        body.put_u16(4 + 1);
         body.put_u16(0x0000);
-        body.put_slice(protocol_name.as_bytes());
+        body.put_u8(self.identification.ea_protocol_identifier);
 
         // ExternalAccessoryProtocolSessionIdentifier
         body.put_u16(4 + 1);
         body.put_u16(0x0001);
-        body.put_u8(protocol_identifier);
+        body.put_u8(session_identifier);
 
         let msg_len = 2 + 2 + body.len() as u16;
         ctrl.put_u16(msg_len);
